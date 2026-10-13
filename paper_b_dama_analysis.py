@@ -533,6 +533,7 @@ if FU is not None:
                               'children_interviewed_with_consent': int(interviewed_.sum()), 'children_declined': int(declined_.sum()),
                               'children_not_interviewed': int((~interviewed_ & ~declined_).sum()),
                               'status_known': int(dall.died_30d.notna().sum()),
+                              'unknown_alive_at_call_within_30d': int((dall.died_30d.isna() & dall.fu_vital.eq('alive')).sum()),
                               'conflicts_with_records': int((dall.died_30d.eq(1) & dall.alive_30d_records).sum()),
                               'readmitted_before_death': int(dall.readmitted_before_death.sum()),
                               'died_with_earlier_encounter_after_dama': int((dall.died_30d.eq(1) & dall.last_record_after.notna()).sum())}
@@ -619,11 +620,33 @@ if FU is not None:
     NUM['primary_deaths_after_dama_place'] = pdead.fu_place.value_counts().to_dict()
     NUM['primary_deaths_after_dama_children'] = int(pdead.pid.nunique())
     ptxt = pdead.fu_death_note.fillna('') + ' ' + pdead.fu_call_note.fillna('')
-    NUM['primary_death_notes'] = {'brain_death_at_or_before_discharge': int(ptxt.str.contains('脑死亡').sum()),
+    NUM['primary_death_notes'] = {'brain_death_recorded': int(ptxt.str.contains('脑死亡').sum()),
                                   'family_asked_for_extubation': int(ptxt.str.contains('拔出气管插管|拔管|拔除气管').sum()),
                                   'death_certificate_from_this_hospital': int(ptxt.str.contains('死亡证').sum()),
                                   'died_before_leaving': int(ptxt.str.contains('院内已死亡').sum())}
     NUM['primary_died_before_leaving_place'] = pdead.loc[ptxt.str.contains('院内已死亡'), 'fu_place'].tolist()
+    # Guardians reported the time from leaving the hospital to death. A later registration at this hospital (admission, or outpatient or
+    # emergency visit) means the interval may refer to that later departure rather than to the DAMA; the death still falls within 30 days.
+    reg = pd.concat([admx.reset_index()[['visit_id', 'patient_id', 'admit_time']].rename(columns={'admit_time': 't'}),
+                     ov[['visit_id', 'patient_id', 'visit_time']].rename(columns={'visit_time': 't'})],
+                    ignore_index=True).astype({'visit_id': str, 'patient_id': str})
+    last_reg = {}
+    for vid, r in pdead.iterrows():
+        E = reg[(reg.patient_id == str(r.patient_id)) & (reg.visit_id != str(vid)) & (reg.t > r.discharge_time)]
+        last_reg[vid] = E.t.max() if len(E) else pd.NaT
+    days_reg = ((pd.Series(last_reg) - pdead.discharge_time).dt.total_seconds() / 86400).dropna()
+    NUM['primary_deaths_with_later_registration'] = {'n': int(len(days_reg)), 'after_readmission': int(pdead.readmitted_before_death.sum()),
+                                                     'days_min': round(float(days_reg.min()), 1) if len(days_reg) else None,
+                                                     'days_max': round(float(days_reg.max()), 1) if len(days_reg) else None}
+    readm = []
+    for vid, r in pdead[pdead.readmitted_before_death].iterrows():   # readmissions after DAMA: days from DAMA to the next admission and its discharge
+        a_ = admx.reset_index()
+        a_ = a_[(a_.patient_id.astype(str) == str(r.patient_id)) & (a_.admit_time > r.discharge_time)].sort_values('admit_time')
+        if len(a_):
+            readm.append({'days_to_readmission': round((a_.admit_time.iloc[0] - r.discharge_time).total_seconds() / 86400, 1),
+                          'days_to_its_discharge': round((a_.discharge_time.iloc[0] - r.discharge_time).total_seconds() / 86400, 1)})
+    NUM['primary_deaths_with_later_registration']['readmissions'] = readm
+    note(f"Deaths after DAMA (primary cohort) with a later registration at this hospital: {NUM['primary_deaths_with_later_registration']}")
     # care received, by 30-day outcome (eFigure 2)
     d30 = dall.died_30d.reindex(P.index)
     isdama = P.dama.eq(True).fillna(False).astype(bool)
@@ -671,7 +694,7 @@ if FU is not None:
     CMP30.to_csv(OUT / 'comparisons_by_30day_outcome.csv', index=False)
     print(CMP30.to_string(index=False))
     txt = dk.death_note.fillna('') + ' ' + dk.call_note.fillna('')
-    NUM['death_notes'] = {'brain_death_at_or_before_discharge': int(txt.str.contains('脑死亡').sum()),
+    NUM['death_notes'] = {'brain_death_recorded': int(txt.str.contains('脑死亡').sum()),
                           'family_asked_for_extubation': int(txt.str.contains('拔出气管插管|拔管|拔除气管').sum()),
                           'death_certificate_from_this_hospital': int(txt.str.contains('死亡证').sum()),
                           'died_before_leaving': int(txt.str.contains('院内已死亡').sum())}
