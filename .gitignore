@@ -1,0 +1,14 @@
+# Data are never committed: frozen data set, follow-up workbooks, caches, and outputs
+AE_freeze_v1.2/
+cache_frozen_tables/
+output_paper_b/
+output_dama_followup/
+*_INTERNAL*
+*.xlsx
+*.csv
+*.pkl
+*.parquet
+# Notebook and Python artifacts
+.ipynb_checkpoints/
+__pycache__/
+*_executed.ipynb
