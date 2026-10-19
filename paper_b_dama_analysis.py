@@ -573,8 +573,29 @@ if FU is not None:
                 'Negative predictive value, % (95% CI)': f(tn, tn + fn), 'Sensitivity, % (95% CI)': f(tp, tp + fn), 'Specificity, % (95% CI)': f(tn, tn + fp)}
 
     final_pos = dall.dama_critical_final.eq(True).fillna(False).astype(bool)
+    # Two definitions that read no text. (1) Organ support in the 24 h before discharge, from orders (the frozen flag
+    # dama_support_last_24h, part of rule category A). (2) What the public PIC database can show: an order of a vasoactive drug
+    # (dopamine, dobutamine, norepinephrine, milrinone, or vasopressin; any route; epinephrine excluded because PIC records no route)
+    # dated on the discharge day or the day before. Drug orders in this export carry no duration and infusions are re-ordered about
+    # daily, so an order on one of those 2 days is the counterpart of a PIC order active on them (see the PIC notebook).
+    SUPPORT_NAME = 'Organ support in the 24 h before discharge (orders only)'
+    PIC_NAME = 'Vasoactive order on the discharge day or the day before (PIC-compatible)'
+    PIC_AGENTS = ['dopamine', 'dobutamine', 'norepinephrine', 'milrinone', 'vasopressin']
+    support24 = dall.dama_support_last_24h.eq(True).fillna(False).astype(bool)
+    DO = L('drug_orders')
+    DO = DO[DO.vasoactive_agent.isin(PIC_AGENTS)].copy()
+    DO['visit_id'] = DO.visit_id.astype(str)
+    DO['day'] = pd.to_datetime(DO.order_time).dt.normalize()
+
+    def pic_flag(df):
+        dis_day = pd.Series(pd.to_datetime(df.discharge_time).dt.normalize().values, index=df.index.astype(str), name='dis_day')
+        x = DO.join(dis_day, on='visit_id', how='inner')
+        ids = set(x.loc[(x.dis_day - x.day).dt.days.between(0, 1), 'visit_id'])
+        return pd.Series(df.index.astype(str).isin(ids), index=df.index)
+
+    pic_pos = pic_flag(dall)
     defs = [('Final label (clinician; rule where unsure)', final_pos), ('Rule alone (category A or B)', cat1.isin(['A', 'B'])),
-            ('Rule category A alone', cat1.eq('A'))]
+            ('Rule category A alone', cat1.eq('A')), (SUPPORT_NAME, support24), (PIC_NAME, pic_pos)]
     acc_rows = []
     for setname, base in [('All index admissions', dall), ('Primary cohort', dall[dall.index.isin(P.index)])]:
         for name, pos in defs:
@@ -585,6 +606,22 @@ if FU is not None:
     NUM['label_accuracy_all'] = ACC.iloc[0].to_dict()
     NUM['label_accuracy_primary'] = ACC[(ACC.Set == 'Primary cohort') & (ACC.Definition == defs[0][0])].iloc[0].to_dict()
     NUM['label_accuracy_rule_alone_all'] = ACC.iloc[1].to_dict()
+    NUM['label_accuracy_support24'] = ACC[ACC.Definition == SUPPORT_NAME].set_index('Set').to_dict('index')
+    NUM['label_accuracy_pic_compatible'] = ACC[ACC.Definition == PIC_NAME].set_index('Set').to_dict('index')
+    # The PIC-compatible definition applied to every child discharged alive, as it must be in a database without a discharge disposition
+    pic_alive = {}
+    for setname, base in [('primary', P), ('all_index', A)]:
+        g = base[~base.death.eq(True).fillna(False).astype(bool)]
+        f = pic_flag(g)
+        is_dama = g.dama.eq(True).fillna(False).astype(bool)
+        d30 = dall.died_30d.reindex(g.index)
+        pic_alive[setname] = {'alive_discharges': int(len(g)), 'flagged': int(f.sum()), 'flagged_dama': int((f & is_dama).sum()),
+                              'flagged_dama_died_30d': int((f & d30.eq(1)).sum()), 'flagged_dama_alive_30d': int((f & d30.eq(0)).sum()),
+                              'flagged_dama_status_unknown': int((f & is_dama & d30.isna()).sum()),
+                              'flagged_not_dama': {str(k): int(v) for k, v in g[f & ~is_dama].disposition.fillna('not recorded').value_counts().items()},
+                              'deaths_after_dama_30d': int(d30.eq(1).sum())}
+    NUM['pic_compatible_all_alive'] = pic_alive
+    note(f"PIC-compatible definition among all children discharged alive: {pic_alive}")
     FUp = FU[FU.index.isin(dall.pid)]                                         # children with a DAMA discharge in the study period
     FUp_raw = FU_RAW[FU_RAW.index.isin(dall.pid)]
     # 30-day deaths by rule category and first-clinician decision

@@ -3,6 +3,9 @@ AE_freeze_v1.2/
 cache_frozen_tables/
 output_paper_b/
 output_dama_followup/
+output_pic_paper_b/
+*.gz
+*.zip
 *_INTERNAL*
 *.xlsx
 *.csv
