@@ -45,6 +45,7 @@ FOLLOWUP_DAYS = 30
 pd.set_option('display.width', 200)
 pd.set_option('display.max_columns', 40)
 NUM = {}            # key numbers for the manuscript
+PEX = []            # every reported P value at full precision (analysis, comparison, characteristic, test, P)
 SUMMARY = []
 
 
@@ -233,6 +234,9 @@ SUBGROUPS = ([('Acute encephalopathy, all', P), ('  PICU stay', P[P.picu]), ('  
               ('  Invasive ventilation', P[P.imv_ever.eq(True).fillna(False).astype(bool)]),
               ('  Vasoactive infusion', P[P.vasoactive_ever.eq(True).fillna(False).astype(bool)])]
              + [(f'  Age {g}', P[P.age_group == g]) for g in P.age_group.cat.categories if (P.age_group == g).any()]
+             # sex as recorded at hospital registration (reported by sex as the journal asks; SAGER)
+             + [(f'  Sex: {g}', P[P.sex == g]) for g in ['male', 'female']]
+             + ([('  Sex: not recorded', P[~P.sex.isin(['male', 'female'])])] if (~P.sex.isin(['male', 'female'])).any() else [])
              + [(f'  {g}', P[P.period == g]) for g in P.period.cat.categories]
              + [(f'  Residence: {g}', P[P.residence == g]) for g in ['Wuhan', 'Outside Wuhan', 'Not recorded']]
              + [(f'  {k}', P[P[k]]) for k in ETIOLOGY if P[k].sum() >= 20]
@@ -328,8 +332,11 @@ term['home'] = term.outcome_group.eq('Critical DAMA')
 cmp_rows = []
 for lab, s in [('Age, years', 'age_years'), ('Length of stay, days', 'los_days')]:
     a, b = term.loc[~term.home, s].dropna(), term.loc[term.home, s].dropna()
+    pmw = stats.mannwhitneyu(a, b).pvalue if len(a) and len(b) else None
+    if pmw is not None:
+        PEX.append(('Primary cohort', 'Critical DAMA vs in-hospital death', lab, 'Mann-Whitney U', pmw))
     cmp_rows.append({'Characteristic': lab + ', median (IQR)', 'In-hospital death': med_iqr(a), 'Critical DAMA': med_iqr(b),
-                     'P (Mann-Whitney)': f'{stats.mannwhitneyu(a, b).pvalue:.3f}' if len(a) and len(b) else ''})
+                     'P (Mann-Whitney)': f'{pmw:.3f}' if pmw is not None else ''})
 for lab, m in [('PICU stay', term.picu), ('Discharged from the PICU', term.discharge_unit.isin(['picu_main', 'picu_west'])),
                ('Invasive mechanical ventilation', term.imv_ever.eq(True).fillna(False).astype(bool)), ('Vasoactive infusion', term.vasoactive_ever.eq(True).fillna(False).astype(bool)),
                ('Cardiopulmonary resuscitation', term.cpr_ever.eq(True).fillna(False).astype(bool)),
@@ -340,6 +347,7 @@ for lab, m in [('PICU stay', term.picu), ('Discharged from the PICU', term.disch
     t = pd.crosstab(base.home, m)
     t = t.reindex(index=[False, True], columns=[False, True], fill_value=0)
     pv = stats.fisher_exact(t.values).pvalue
+    PEX.append(('Primary cohort', 'Critical DAMA vs in-hospital death', lab, 'Fisher exact', pv))
     cmp_rows.append({'Characteristic': lab, 'In-hospital death': n_pct(m[~base.home], base[~base.home]),
                      'Critical DAMA': n_pct(m[base.home], base[base.home]), 'P (Mann-Whitney)': f'Fisher {pv:.3f}'})
 T3 = pd.DataFrame(cmp_rows)
@@ -724,9 +732,11 @@ if FU is not None:
         for k, v in feats_.items():
             t = [[int(v[a_].sum()), int((~v[a_]).sum())], [int(v[b_].sum()), int((~v[b_]).sum())]]
             cmp30.append({'comparison': f'Died after DAMA vs {other}', 'characteristic': k, 'P (Fisher)': stats.fisher_exact(t).pvalue})
+            PEX.append(('Primary cohort', f'Died after DAMA vs {other}', k, 'Fisher exact', cmp30[-1]['P (Fisher)']))
         for lab_, col_ in [('Age', 'age_years'), ('Length of stay', 'los_days')]:
             x_, y_ = P.loc[a_, col_].dropna(), P.loc[b_, col_].dropna()
             cmp30.append({'comparison': f'Died after DAMA vs {other}', 'characteristic': lab_, 'P (Mann-Whitney)': stats.mannwhitneyu(x_, y_).pvalue})
+            PEX.append(('Primary cohort', f'Died after DAMA vs {other}', lab_, 'Mann-Whitney U', cmp30[-1]['P (Mann-Whitney)']))
     CMP30 = pd.DataFrame(cmp30)
     CMP30.to_csv(OUT / 'comparisons_by_30day_outcome.csv', index=False)
     print(CMP30.to_string(index=False))
@@ -831,6 +841,7 @@ for y, lab in trend_series:
     fit = sm.GLM(y.values, X, family=sm.families.Poisson(), offset=np.log(TR.admissions.values)).fit()
     rr, lo, hi = np.exp(fit.params[1]), np.exp(fit.conf_int()[1][0]), np.exp(fit.conf_int()[1][1])
     note(f'Annual rate ratio, {lab}: {rr:.2f} ({lo:.2f}-{hi:.2f}), P = {fit.pvalues[1]:.3f}')
+    PEX.append(('Primary cohort', 'Annual trend (Poisson regression, log admissions offset)', lab, 'Wald', float(fit.pvalues[1])))
     NUM[f'trend_rr_{lab.replace(" ", "_")}'] = f'{rr:.2f} ({lo:.2f}-{hi:.2f}); P = {fit.pvalues[1]:.3f}'
 
 # By month of admission (supplementary table; the December 2022 SARS-CoV-2 Omicron wave is quoted in the Results)
@@ -1336,6 +1347,8 @@ if FU is not None:
 
 # %%
 NUM['outcome_groups_primary'] = {g: int((P.outcome_group == g).sum()) for g in GROUPS}
+# every reported P value at full precision; the article gives them to 2 significant figures (p<0.0001 below that)
+pd.DataFrame(PEX, columns=['set', 'comparison', 'characteristic', 'test', 'P']).to_csv(OUT / 'p_values_exact.csv', index=False, float_format='%.6g')
 (OUT / 'numbers.json').write_text(json.dumps(NUM, indent=1, ensure_ascii=False, default=str), encoding='utf-8')
 (OUT / 'summary.md').write_text('# Paper B analysis summary\n\n' + '\n'.join(f'- {s}' for s in SUMMARY) + '\n', encoding='utf-8')
 print(json.dumps(NUM, indent=1, ensure_ascii=False, default=str))

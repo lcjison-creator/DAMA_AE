@@ -9,7 +9,7 @@ The study measured how many children with acute encephalopathy died after discha
 `paper_b_dama_analysis.ipynb` reproduces every Wuhan number, table, and figure in the article from a frozen, versioned research data set (`AE_freeze_v1.2`) and the completed telephone follow-up list:
 
 1. Cohorts and the study period
-2. Recorded vs follow-up-corrected mortality, by subgroup, with sensitivity analyses
+2. Recorded vs follow-up-corrected mortality, by subgroup (including sex), with sensitivity analyses
 3. Characteristics by discharge outcome and by 30-day status (Table 1, eTable 1)
 4. The record-based label of critical DAMA (rule and clinician decision) and its accuracy against death within 30 days, together with 2 definitions that use no text: organ support in the 24 hours before discharge, and the PIC-compatible definition (eTable 4)
 5. Trends by year and month, including the post hoc analysis around December 2022
@@ -29,7 +29,7 @@ PIC is not included either. It is available from PhysioNet to credentialed users
 
 1. Put `paper_b_dama_analysis.ipynb` in a folder that contains the frozen data set folder `AE_freeze_v1.2/` (which includes its loader, `code/load_frozen.py`) and the completed follow-up workbook `dama_phone_followup_INTERNAL.xlsx`.
 2. Install the packages in `requirements.txt` (Python 3.13).
-3. Run all cells. Outputs are written to `output_paper_b/`: tables as CSV, figures as PNG (600 dpi) and PDF, `numbers.json`, and `summary.md`. No row-level identifiers are written to the output folder.
+3. Run all cells. Outputs are written to `output_paper_b/`: tables as CSV (including `p_values_exact.csv`, every reported P value at full precision), figures as PNG (600 dpi) and PDF, `numbers.json`, and `summary.md`. No row-level identifiers are written to the output folder.
 
 **PIC check**
 
